@@ -38,10 +38,16 @@ func main() {
 	}
 	// output
 
-	fastCom := fast.New()
+	fastCom, err := fast.New(&fast.Option{
+		BindAddress: "192.168.86.23",
+	})
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 
 	// init
-	err := fastCom.Init()
+	err = fastCom.Init()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -86,7 +92,6 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
 	return
 }
 
