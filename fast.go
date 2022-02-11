@@ -24,19 +24,62 @@ func main() {
 		os.Exit(-1)
 	}
 
-	status := ""
+	var format func(float64) (string, string, float64)
+	if kb {
+		format = formatKbps
+	} else if mb {
+		format = formatMbps
+	} else if gb {
+		format = formatGbps
+	} else {
+		format = formatNatural
+	}
+
 	spinner := spin.New("")
+	ticker := time.NewTicker(100 * time.Millisecond)
+	if silent {
+		// do no print updates in silent mode
+		ticker.Stop()
+	}
 
 	// output
-	ticker := time.NewTicker(100 * time.Millisecond)
-	if !silent {
-		go func() {
-			for range ticker.C {
-				fmt.Printf("%c[2K %s  %s\r", 27, spinner.Spin(), status)
+	status_update := make(chan string)
+	// measure
+	KbpsChan := make(chan float64)
+	// finish line
+	done := make(chan bool)
+
+	printer := func() {
+		update := ""
+		updates:
+		for {
+			select {
+			case s, ok := <-status_update:
+				if ok {
+					update = s
+				}
+			case m, ok := <-KbpsChan:
+				if ok {
+					f, unit, value := format(m)
+					update = fmt.Sprintf(f, value) + " " + unit
+				} else {
+					// Close up shop
+					break updates
+				}
+			case <- ticker.C:
+				// updates get printed with \r
+				fmt.Printf("%c[2K %s  %-20s\r", 27, spinner.Spin(), update)
 			}
-		}()
+		}
+
+
+		// final print should use \n
+		fmt.Printf("%-20s\n", update)
+		done <- true
 	}
-	// output
+
+
+	go printer()
 
 	fastCom, err := fast.New(&fast.Option{
 		BindAddress: "192.168.86.23",
@@ -53,7 +96,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	status = "connecting"
+	status_update <- "connecting"
 
 	// get urls
 	urls, err := fastCom.GetUrls()
@@ -62,36 +105,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	status = "loading"
-
-	// measure
-	KbpsChan := make(chan float64)
-
-	go func() {
-		var value, units string
-		for Kbps := range KbpsChan {
-			value, units = format(Kbps, kb, mb, gb)
-			// don't print the units of measurement if explicitly asked for
-			if kb || mb || gb {
-				status = fmt.Sprintf("%s", value)
-			} else {
-				status = fmt.Sprintf("%s %s", value, units)
-			}
-
-		}
-		if silent {
-			fmt.Printf("%s\n", status)
-		} else {
-			fmt.Printf("\r%c[2K -> %s\n", 27, status)
-		}
-	}()
+	status_update <- "loading"
 
 	err = fastCom.Measure(urls, KbpsChan)
-	ticker.Stop()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	
+	// Wait here till done
+	<- done
+
 	return
 }
 
@@ -101,12 +125,14 @@ func formatGbps(Kbps float64) (string, string, float64) {
 	value := Kbps / 1000000
 	return f, unit, value
 }
+
 func formatMbps(Kbps float64) (string, string, float64) {
 	f := "%.2f"
 	unit := "Mbps"
 	value := Kbps / 1000
 	return f, unit, value
 }
+
 func formatKbps(Kbps float64) (string, string, float64) {
 	f := "%.f"
 	unit := "Kbps"
@@ -114,25 +140,17 @@ func formatKbps(Kbps float64) (string, string, float64) {
 	return f, unit, value
 }
 
-func format(Kbps float64, kb bool, mb bool, gb bool) (string, string) {
+func formatNatural(Kbps float64) (string, string, float64) {
 	var value float64
 	var unit string
 	var f string
 
-	if kb {
-		f, unit, value = formatKbps(Kbps)
-	} else if mb {
-		f, unit, value = formatMbps(Kbps)
-	} else if gb {
-		f, unit, value = formatGbps(Kbps)
-	} else if Kbps > 1000000 { // Gbps
+	if Kbps > 1000000 { // Gbps
 		f, unit, value = formatGbps(Kbps)
 	} else if Kbps > 1000 { // Mbps
 		f, unit, value = formatMbps(Kbps)
 	} else {
 		f, unit, value = formatKbps(Kbps)
 	}
-
-	strValue := fmt.Sprintf(f, value)
-	return strValue, unit
+	return f, unit, value
 }
